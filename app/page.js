@@ -194,12 +194,15 @@ function BulkTrackingSheet({ person, defs, onApply, onClose }) {
 
 // ── BulkActionBar ─────────────────────────────────────────────────────────────
 function BulkActionBar({ person, defs, onBulkSend, onOpenBulkTracking }) {
+  // เฉพาะที่ยังไม่ได้ส่ง (lock: ส่งแล้วไม่นับ)
   const notSent     = defs.filter(d => !person.docState[d.id]?.fieldSent);
   const sentNoTrack = defs.filter(d =>  person.docState[d.id]?.fieldSent && !person.docState[d.id]?.trackingNo);
   const sentDocs    = defs.filter(d =>  person.docState[d.id]?.fieldSent);
-  if (sentDocs.length===0 && notSent.length===0) return null;
+  // ซ่อน bar ถ้าไม่มีอะไรให้ทำเลย
+  if (notSent.length===0 && sentDocs.length===0) return null;
   return (
     <div style={{ padding:"12px 14px", borderTop:`1.5px solid ${C.primaryMd}`, background:`linear-gradient(135deg,${C.tealLt},${C.primaryLt})`, display:"flex", gap:8, flexWrap:"wrap" }}>
+      {/* แสดงปุ่มส่งทั้งหมดเฉพาะเมื่อยังมีค้างส่ง */}
       {notSent.length>0 && (
         <button onClick={()=>onBulkSend(notSent.map(d=>d.id))} style={{ flex:1, minWidth:140, padding:"11px 14px", borderRadius:10, border:`1.5px solid ${C.teal}`, background:C.teal, color:"white", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, minHeight:44, boxShadow:`0 2px 8px rgba(26,138,122,.3)` }}>
           ✓ ส่งทั้งหมด ({notSent.length} รายการ)
@@ -226,10 +229,11 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
   useEffect(()=>{ if(showT) setTimeout(()=>trackRef.current?.focus(),80); },[showT]);
   useEffect(()=>{ if(showN) setTimeout(()=>noteRef.current?.focus(),80); },[showN]);
 
-  const gap     = state.fieldSent && !state.hrReceived;
-  const done    = !!state.hrReceived;
-  const rowBg   = done?C.primaryLt : gap?C.orangeLt : "white";
-  const rowBord = done?C.primaryMd : gap?C.orangeMd : C.border;
+  const gap      = state.fieldSent && !state.hrReceived;
+  const done     = !!state.hrReceived;
+  const locked   = !!state.fieldSent; // ← ส่งแล้ว = lock ไม่ให้แก้ (field side)
+  const rowBg    = done ? C.primaryLt : gap ? C.orangeLt : "white";
+  const rowBord  = done ? C.primaryMd : gap ? C.orangeMd : locked ? C.tealMd : C.border;
 
   return (
     <div style={{ borderRadius:12, border:`1.5px solid ${rowBord}`, background:rowBg, marginBottom:8, overflow:"hidden", transition:"all .2s", boxShadow:done?"none":C.shadow }}>
@@ -238,6 +242,8 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
           <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginBottom:3 }}>
             <span style={{ fontSize:14, fontWeight:600, color:done?C.primary:C.text, textDecoration:done?"line-through":"none", opacity:done?.65:1 }}>{docDef.label}</span>
             {!docDef.required && <span style={{ fontSize:9, color:C.muted, background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:4, padding:"1px 5px" }}>ไม่บังคับ</span>}
+            {/* lock badge */}
+            {locked && role==="field" && <span style={{ fontSize:9, color:C.teal, background:C.tealLt, border:`1px solid ${C.tealMd}`, borderRadius:4, padding:"1px 6px", fontWeight:700 }}>🔒 ส่งแล้ว</span>}
           </div>
           <div style={{ display:"flex", flexWrap:"wrap", gap:5, alignItems:"center" }}>
             {gap && <span style={{ fontSize:10, fontWeight:700, color:C.orange, background:C.orangeLt, borderRadius:5, padding:"1px 7px", border:`1px solid ${C.orangeMd}` }}>⚠ รอ HR</span>}
@@ -247,27 +253,54 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
             {state.hrReceivedAt && <span style={{ fontSize:10, color:C.primary, fontWeight:600 }}>✅ {state.hrReceivedAt}</span>}
           </div>
         </div>
+
+        {/* Field checkbox — off (locked) เมื่อส่งแล้ว */}
         <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
           <span style={{ fontSize:9, color:C.muted, fontWeight:600 }}>🚗 ส่ง</span>
-          <Chk active={state.fieldSent} tint={C.teal} tintLt={C.tealLt} onCk={onToggleField} off={role!=="field"}/>
+          <Chk active={state.fieldSent} tint={C.teal} tintLt={C.tealLt}
+            onCk={onToggleField}
+            off={role!=="field" || locked}  // ← lock ทันทีที่ส่งแล้ว
+          />
         </div>
+
         <span style={{ color:C.borderMd, fontSize:18 }}>›</span>
+
+        {/* HR checkbox — lock เมื่อรับแล้ว */}
         <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
           <span style={{ fontSize:9, color:C.muted, fontWeight:600 }}>🏢 รับ</span>
-          <Chk active={state.hrReceived} tint={C.primary} tintLt={C.primaryLt} onCk={onToggleHR} off={role!=="hr"||!state.fieldSent}/>
+          <Chk active={state.hrReceived} tint={C.primary} tintLt={C.primaryLt}
+            onCk={onToggleHR}
+            off={role!=="hr" || !state.fieldSent || !!state.hrReceived}
+          />
         </div>
+
+        {/* Action buttons — ซ่อนเมื่อส่งแล้ว (field) ยกเว้นเลขเทรคกิ้งซึ่งยังแก้ได้ */}
         <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
           {role==="field" && (
-            <button onClick={()=>{setShowT(v=>!v);setShowN(false);}} style={{ width:36, height:36, borderRadius:8, border:`1.5px solid ${state.trackingNo?C.trackBorder:C.border}`, background:state.trackingNo?C.trackBg:"white", color:state.trackingNo?C.trackText:C.muted, fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:state.trackingNo?`0 0 0 2px ${C.trackBorder}44`:"none" }}>📦</button>
+            <button
+              onClick={locked ? ()=>{setShowT(v=>!v); setShowN(false);} : ()=>{setShowT(v=>!v); setShowN(false);}}
+              style={{ width:36, height:36, borderRadius:8,
+                border:`1.5px solid ${state.trackingNo?C.trackBorder:C.border}`,
+                background:state.trackingNo?C.trackBg:"white",
+                color:state.trackingNo?C.trackText:C.muted,
+                fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+                boxShadow:state.trackingNo?`0 0 0 2px ${C.trackBorder}44`:"none",
+              }}>📦</button>
           )}
-          <button onClick={()=>{setShowN(v=>!v);setShowT(false);}} style={{ width:36, height:36, borderRadius:8, border:`1.5px solid ${state.note?C.primaryMd:C.border}`, background:state.note?C.primaryLt:"white", color:state.note?C.primary:C.muted, fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>📝</button>
+          {/* หมายเหตุ — แก้ได้เสมอ ทั้ง field และ HR */}
+          <button onClick={()=>{setShowN(v=>!v); setShowT(false);}} style={{ width:36, height:36, borderRadius:8, border:`1.5px solid ${state.note?C.primaryMd:C.border}`, background:state.note?C.primaryLt:"white", color:state.note?C.primary:C.muted, fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>📝</button>
         </div>
       </div>
+
+      {/* Tracking input — ยังแก้ได้หลังส่ง (กรณีพิมพ์เลขผิด) */}
       {showT && role==="field" && (
         <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
           <div style={{ background:C.trackBg, border:`2px solid ${C.trackBorder}`, borderRadius:11, padding:"12px 13px", boxShadow:"0 2px 10px rgba(212,160,23,.15)" }}>
             <div style={{ fontSize:11, fontWeight:700, color:C.trackText, marginBottom:8 }}>📦 เลขพัสดุรายการนี้</div>
-            <input ref={trackRef} value={tv} onChange={e=>setTv(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"){onTracking(tv);setShowT(false);} if(e.key==="Escape")setShowT(false); }} placeholder="TH12345678901" style={{ width:"100%", padding:"11px 13px", fontSize:15, fontWeight:700, letterSpacing:.6, background:"white", border:`2px solid ${C.trackBorder}`, borderRadius:8, outline:"none", color:C.trackText, marginBottom:10 }}/>
+            <input ref={trackRef} value={tv} onChange={e=>setTv(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"){onTracking(tv);setShowT(false);} if(e.key==="Escape")setShowT(false); }}
+              placeholder="TH12345678901"
+              style={{ width:"100%", padding:"11px 13px", fontSize:15, fontWeight:700, letterSpacing:.6, background:"white", border:`2px solid ${C.trackBorder}`, borderRadius:8, outline:"none", color:C.trackText, marginBottom:10 }}/>
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={()=>{onTracking(tv);setShowT(false);}} style={{ flex:1, padding:"10px", borderRadius:9, border:"none", background:C.primary, color:"white", fontSize:13, fontWeight:700, cursor:"pointer", minHeight:42 }}>✓ บันทึก</button>
               <button onClick={()=>setShowT(false)} style={{ padding:"10px 14px", borderRadius:9, border:`1px solid ${C.border}`, background:"white", color:C.muted, fontSize:13, cursor:"pointer", minHeight:42 }}>ยกเลิก</button>
@@ -279,7 +312,10 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
         <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
           <div style={{ background:C.primaryLt, border:`1.5px solid ${C.primaryMd}`, borderRadius:11, padding:"12px 13px" }}>
             <div style={{ fontSize:11, fontWeight:700, color:C.primary, marginBottom:8 }}>📝 หมายเหตุ</div>
-            <input ref={noteRef} value={nv} onChange={e=>setNv(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"){onNote(nv);setShowN(false);} if(e.key==="Escape")setShowN(false); }} placeholder="พิมพ์หมายเหตุ..." style={{ width:"100%", padding:"10px 12px", fontSize:14, background:"white", border:`1.5px solid ${C.primaryMd}`, borderRadius:8, outline:"none", color:C.text, marginBottom:10 }}/>
+            <input ref={noteRef} value={nv} onChange={e=>setNv(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"){onNote(nv);setShowN(false);} if(e.key==="Escape")setShowN(false); }}
+              placeholder="พิมพ์หมายเหตุ..."
+              style={{ width:"100%", padding:"10px 12px", fontSize:14, background:"white", border:`1.5px solid ${C.primaryMd}`, borderRadius:8, outline:"none", color:C.text, marginBottom:10 }}/>
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={()=>{onNote(nv);setShowN(false);}} style={{ flex:1, padding:"10px", borderRadius:9, border:"none", background:C.primary, color:"white", fontSize:13, fontWeight:700, cursor:"pointer", minHeight:42 }}>✓ บันทึก</button>
               <button onClick={()=>setShowN(false)} style={{ padding:"10px 14px", borderRadius:9, border:`1px solid ${C.border}`, background:"white", color:C.muted, fontSize:13, cursor:"pointer", minHeight:42 }}>ยกเลิก</button>
@@ -510,9 +546,9 @@ export default function Home() {
     setPeople(prev=>prev.map(p=>{
       if(p.name!==name) return p;
       const d={...p.docState[docId]};
-      if      (action==="field")         { d.fieldSent=!d.fieldSent; d.fieldSentAt=d.fieldSent?todayStr():null; if(!d.fieldSent){d.hrReceived=false;d.hrReceivedAt=null;} }
-      else if (action==="field_force_on"){ if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }
-      else if (action==="hr")            { d.hrReceived=!d.hrReceived; d.hrReceivedAt=d.hrReceived?todayStr():null; }
+      if      (action==="field")         { if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }      // ล็อค: ส่งแล้วแก้ไม่ได้
+      else if (action==="field_force_on"){ if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }      // bulk send
+      else if (action==="hr")            { if(!d.hrReceived){d.hrReceived=true;d.hrReceivedAt=todayStr();} }   // ล็อค: HR รับแล้วแก้ไม่ได้
       else if (action==="tracking")      { d.trackingNo=value; }
       else if (action==="note")          { d.note=value; }
       return{...p,docState:{...p.docState,[docId]:d}};
