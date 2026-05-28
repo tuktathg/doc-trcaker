@@ -223,7 +223,8 @@ function BulkActionBar({ person, defs, onBulkSend, onOpenBulkTracking }) {
 }
 
 // ── CheckRow ──────────────────────────────────────────────────────────────────
-function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, onNote }) {
+// editMode prop: เมื่อ true ปลดล็อค checkbox ได้
+function CheckRow({ docDef, state, role, editMode, onToggleField, onToggleHR, onToggleFieldOff, onToggleHROff, onTracking, onNote }) {
   const [showT, setShowT] = useState(false);
   const [showN, setShowN] = useState(false);
   const [tv, setTv] = useState(state.trackingNo||"");
@@ -232,25 +233,51 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
   const noteRef  = useRef(null);
   useEffect(()=>{ if(showT) setTimeout(()=>trackRef.current?.focus(),80); },[showT]);
   useEffect(()=>{ if(showN) setTimeout(()=>noteRef.current?.focus(),80); },[showN]);
+  // sync input values เมื่อ state เปลี่ยนจากภายนอก
+  useEffect(()=>{ setTv(state.trackingNo||""); },[state.trackingNo]);
+  useEffect(()=>{ setNv(state.note||""); },[state.note]);
 
   const gap      = state.fieldSent && !state.hrReceived;
   const done     = !!state.hrReceived;
-  const locked   = !!state.fieldSent; // ← ส่งแล้ว = lock ไม่ให้แก้ (field side)
-  const rowBg    = done ? C.primaryLt : gap ? C.orangeLt : "white";
-  const rowBord  = done ? C.primaryMd : gap ? C.orangeMd : locked ? C.tealMd : C.border;
+  // ปกติ: lock เมื่อส่ง/รับแล้ว — editMode: ปลดล็อคทั้งหมด
+  const fieldLocked = !editMode && !!state.fieldSent;
+  const hrLocked    = !editMode && !!state.hrReceived;
+
+  const rowBg   = done ? C.primaryLt : gap ? C.orangeLt : editMode ? "#FFFEF5" : "white";
+  const rowBord = editMode ? C.orange+"88" : done ? C.primaryMd : gap ? C.orangeMd : state.fieldSent ? C.tealMd : C.border;
+
+  // toggle handlers: edit mode สามารถ uncheck ได้
+  function handleFieldClick() {
+    if (editMode) {
+      state.fieldSent ? onToggleFieldOff() : onToggleField();
+    } else if (!fieldLocked) {
+      onToggleField();
+    }
+  }
+  function handleHRClick() {
+    if (editMode) {
+      state.hrReceived ? onToggleHROff() : onToggleHR();
+    } else if (!hrLocked && state.fieldSent) {
+      onToggleHR();
+    }
+  }
+
+  const fieldOff = editMode ? false : (role!=="field" || fieldLocked);
+  const hrOff    = editMode ? false : (role!=="hr" || !state.fieldSent || hrLocked);
 
   return (
-    <div style={{ borderRadius:12, border:`1.5px solid ${rowBord}`, background:rowBg, marginBottom:8, overflow:"hidden", transition:"all .2s", boxShadow:done?"none":C.shadow }}>
+    <div style={{ borderRadius:12, border:`1.5px solid ${rowBord}`, background:rowBg, marginBottom:8, overflow:"hidden", transition:"all .2s", boxShadow:done&&!editMode?"none":C.shadow }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"13px 14px" }}>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginBottom:3 }}>
-            <span style={{ fontSize:14, fontWeight:600, color:done?C.primary:C.text, textDecoration:done?"line-through":"none", opacity:done?.65:1 }}>{docDef.label}</span>
+            <span style={{ fontSize:14, fontWeight:600, color:done&&!editMode?C.primary:C.text, textDecoration:done&&!editMode?"line-through":"none", opacity:done&&!editMode?.65:1 }}>
+              {docDef.label}
+            </span>
             {!docDef.required && <span style={{ fontSize:9, color:C.muted, background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:4, padding:"1px 5px" }}>ไม่บังคับ</span>}
-            {/* lock badge */}
-            {locked && role==="field" && <span style={{ fontSize:9, color:C.teal, background:C.tealLt, border:`1px solid ${C.tealMd}`, borderRadius:4, padding:"1px 6px", fontWeight:700 }}>🔒 ส่งแล้ว</span>}
+            {editMode && <span style={{ fontSize:9, color:C.orange, background:"#FFF3E0", border:`1px solid ${C.orange}88`, borderRadius:4, padding:"1px 6px", fontWeight:700 }}>✏️ แก้ไขได้</span>}
           </div>
           <div style={{ display:"flex", flexWrap:"wrap", gap:5, alignItems:"center" }}>
-            {gap && <span style={{ fontSize:10, fontWeight:700, color:C.orange, background:C.orangeLt, borderRadius:5, padding:"1px 7px", border:`1px solid ${C.orangeMd}` }}>⚠ รอ HR</span>}
+            {gap && !editMode && <span style={{ fontSize:10, fontWeight:700, color:C.orange, background:C.orangeLt, borderRadius:5, padding:"1px 7px", border:`1px solid ${C.orangeMd}` }}>⚠ รอ HR</span>}
             {state.trackingNo && <span style={{ fontSize:10, fontWeight:700, color:C.trackText, background:C.trackBg, borderRadius:5, padding:"2px 8px", border:`1.5px solid ${C.trackBorder}` }}>📦 {state.trackingNo}</span>}
             {state.note && <span style={{ fontSize:10, color:C.teal }}>💬 {state.note}</span>}
             {state.fieldSentAt && <span style={{ fontSize:10, color:C.muted }}>📤 {state.fieldSentAt}</span>}
@@ -258,31 +285,30 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
           </div>
         </div>
 
-        {/* Field checkbox — off (locked) เมื่อส่งแล้ว */}
+        {/* Field checkbox */}
         <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
           <span style={{ fontSize:9, color:C.muted, fontWeight:600 }}>🚗 ส่ง</span>
           <Chk active={state.fieldSent} tint={C.teal} tintLt={C.tealLt}
-            onCk={onToggleField}
-            off={role!=="field" || locked}  // ← lock ทันทีที่ส่งแล้ว
+            onCk={handleFieldClick}
+            off={editMode ? false : (role!=="field" || fieldLocked)}
           />
         </div>
 
         <span style={{ color:C.borderMd, fontSize:18 }}>›</span>
 
-        {/* HR checkbox — lock เมื่อรับแล้ว */}
+        {/* HR checkbox */}
         <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
           <span style={{ fontSize:9, color:C.muted, fontWeight:600 }}>🏢 รับ</span>
           <Chk active={state.hrReceived} tint={C.primary} tintLt={C.primaryLt}
-            onCk={onToggleHR}
-            off={role!=="hr" || !state.fieldSent || !!state.hrReceived}
+            onCk={handleHRClick}
+            off={editMode ? false : (role!=="hr" || !state.fieldSent || hrLocked)}
           />
         </div>
 
-        {/* Action buttons — ซ่อนเมื่อส่งแล้ว (field) ยกเว้นเลขเทรคกิ้งซึ่งยังแก้ได้ */}
+        {/* Action buttons */}
         <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-          {role==="field" && (
-            <button
-              onClick={locked ? ()=>{setShowT(v=>!v); setShowN(false);} : ()=>{setShowT(v=>!v); setShowN(false);}}
+          {(role==="field" || editMode) && (
+            <button onClick={()=>{setShowT(v=>!v); setShowN(false);}}
               style={{ width:36, height:36, borderRadius:8,
                 border:`1.5px solid ${state.trackingNo?C.trackBorder:C.border}`,
                 background:state.trackingNo?C.trackBg:"white",
@@ -291,13 +317,15 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
                 boxShadow:state.trackingNo?`0 0 0 2px ${C.trackBorder}44`:"none",
               }}>📦</button>
           )}
-          {/* หมายเหตุ — แก้ได้เสมอ ทั้ง field และ HR */}
-          <button onClick={()=>{setShowN(v=>!v); setShowT(false);}} style={{ width:36, height:36, borderRadius:8, border:`1.5px solid ${state.note?C.primaryMd:C.border}`, background:state.note?C.primaryLt:"white", color:state.note?C.primary:C.muted, fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>📝</button>
+          <button onClick={()=>{setShowN(v=>!v); setShowT(false);}}
+            style={{ width:36, height:36, borderRadius:8, border:`1.5px solid ${state.note?C.primaryMd:C.border}`,
+              background:state.note?C.primaryLt:"white", color:state.note?C.primary:C.muted,
+              fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>📝</button>
         </div>
       </div>
 
-      {/* Tracking input — ยังแก้ได้หลังส่ง (กรณีพิมพ์เลขผิด) */}
-      {showT && role==="field" && (
+      {/* Tracking input */}
+      {showT && (
         <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
           <div style={{ background:C.trackBg, border:`2px solid ${C.trackBorder}`, borderRadius:11, padding:"12px 13px", boxShadow:"0 2px 10px rgba(212,160,23,.15)" }}>
             <div style={{ fontSize:11, fontWeight:700, color:C.trackText, marginBottom:8 }}>📦 เลขพัสดุรายการนี้</div>
@@ -312,6 +340,7 @@ function CheckRow({ docDef, state, role, onToggleField, onToggleHR, onTracking, 
           </div>
         </div>
       )}
+      {/* Note input */}
       {showN && (
         <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
           <div style={{ background:C.primaryLt, border:`1.5px solid ${C.primaryMd}`, borderRadius:11, padding:"12px 13px" }}>
@@ -394,8 +423,8 @@ function PersonCard({ person, selected, onClick, dynDefs }) {
 // ── DetailPanel ───────────────────────────────────────────────────────────────
 function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
   const [showBulk, setShowBulk] = useState(false);
-  // field mode: show only pending docs; hr mode: show all
   const [showAll, setShowAll]   = useState(false);
+  const [editMode, setEditMode] = useState(false); // ปลดล็อคแก้ไข
 
   const defs       = getDocDefs(person.position, dynDefs);
   const prog       = calcProg(defs, person.docState);
@@ -405,9 +434,10 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
   const sentNoTrk  = defs.filter(d=>person.docState[d.id]?.fieldSent&&!person.docState[d.id]?.trackingNo).length;
 
   // which docs to display
-  const displayDefs = (role==="field" && !showAll)
-    ? defs.filter(d => !person.docState[d.id]?.fieldSent)   // only pending
-    : defs;                                                   // all
+  // editMode: แสดงทั้งหมดเสมอ / field ปกติ: แสดงแค่ค้างส่ง ถ้าไม่ toggle showAll
+  const displayDefs = (editMode || showAll || role==="hr")
+    ? defs
+    : defs.filter(d => !person.docState[d.id]?.fieldSent);
 
   function handleBulkSend(ids)   { ids.forEach(id=>onUpdate(person.name,id,"field_force_on")); }
   function handleBulkTrack(ids,t){ ids.forEach(id=>onUpdate(person.name,id,"tracking",t)); }
@@ -467,18 +497,36 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
           </div>
         </div>
 
-        {/* Subheader: toggle show-all for field */}
-        <div style={{ padding:"7px 18px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", background:C.cardAlt }}>
-          <div style={{ display:"flex", gap:12, fontSize:10.5, color:C.muted, flexWrap:"wrap" }}>
+        {/* Subheader */}
+        <div style={{ padding:"8px 14px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", background: editMode ? "#FFF8F0" : C.cardAlt, gap:8 }}>
+          <div style={{ display:"flex", gap:10, fontSize:10.5, color:C.muted, flexWrap:"wrap", alignItems:"center" }}>
             <span style={{ color:C.teal, fontWeight:600 }}>■ ส่งแล้ว</span>
             <span style={{ color:C.primary, fontWeight:600 }}>■ HR รับ</span>
             <span style={{ color:C.trackText, fontWeight:600 }}>📦 เทรคกิ้ง</span>
+            {editMode && <span style={{ color:C.orange, fontWeight:700, fontSize:11 }}>✏️ โหมดแก้ไข — แตะ checkbox เพื่อเปลี่ยนสถานะ</span>}
           </div>
-          {role==="field" && (
-            <button onClick={()=>setShowAll(v=>!v)} style={{ fontSize:11, fontWeight:700, color:C.primary, background:C.primaryLt, border:`1px solid ${C.primaryMd}`, borderRadius:7, padding:"4px 10px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-              {showAll ? "แสดงเฉพาะค้างส่ง" : `แสดงทั้งหมด (${defs.length})`}
+          <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+            {role==="field" && !editMode && (
+              <button onClick={()=>setShowAll(v=>!v)} style={{ fontSize:11, fontWeight:700, color:C.primary, background:C.primaryLt, border:`1px solid ${C.primaryMd}`, borderRadius:7, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap", minHeight:32 }}>
+                {showAll ? "ค้างส่ง" : `ทั้งหมด (${defs.length})`}
+              </button>
+            )}
+            {/* ปุ่มแก้ไข */}
+            <button
+              onClick={()=>{ setEditMode(v=>!v); setShowAll(true); }}
+              style={{
+                fontSize:11, fontWeight:700, padding:"5px 11px", borderRadius:7, cursor:"pointer",
+                fontFamily:"inherit", whiteSpace:"nowrap", minHeight:32,
+                background: editMode ? C.orange : "white",
+                color:      editMode ? "white"  : C.orange,
+                border:     `1.5px solid ${C.orange}`,
+                boxShadow:  editMode ? `0 2px 8px rgba(192,119,58,.3)` : "none",
+                transition: "all .18s",
+              }}
+            >
+              {editMode ? "✓ เสร็จสิ้น" : "✏️ แก้ไข"}
             </button>
-          )}
+          </div>
         </div>
 
         {/* Checklist */}
@@ -487,8 +535,11 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
             ? <div style={{ textAlign:"center", padding:40, color:C.primary, fontSize:14, fontWeight:600 }}>✅ ส่งเอกสารครบทุกรายการแล้ว!</div>
             : displayDefs.map(doc=>(
                 <CheckRow key={doc.id} docDef={doc} state={person.docState[doc.id]||{}} role={role}
+                  editMode={editMode}
                   onToggleField={()=>onUpdate(person.name,doc.id,"field")}
                   onToggleHR={()=>onUpdate(person.name,doc.id,"hr")}
+                  onToggleFieldOff={()=>onUpdate(person.name,doc.id,"field_off")}
+                  onToggleHROff={()=>onUpdate(person.name,doc.id,"hr_off")}
                   onTracking={v=>onUpdate(person.name,doc.id,"tracking",v)}
                   onNote={v=>onUpdate(person.name,doc.id,"note",v)}
                 />
@@ -552,9 +603,11 @@ export default function Home() {
     setPeople(prev=>prev.map(p=>{
       if(p.name!==name) return p;
       const d={...p.docState[docId]};
-      if      (action==="field")         { if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }      // ล็อค: ส่งแล้วแก้ไม่ได้
-      else if (action==="field_force_on"){ if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }      // bulk send
-      else if (action==="hr")            { if(!d.hrReceived){d.hrReceived=true;d.hrReceivedAt=todayStr();} }   // ล็อค: HR รับแล้วแก้ไม่ได้
+      if      (action==="field")          { if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }
+      else if (action==="field_force_on") { if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }
+      else if (action==="field_off")      { d.fieldSent=false;d.fieldSentAt=null;d.hrReceived=false;d.hrReceivedAt=null; } // edit mode
+      else if (action==="hr")             { if(!d.hrReceived){d.hrReceived=true;d.hrReceivedAt=todayStr();} }
+      else if (action==="hr_off")         { d.hrReceived=false;d.hrReceivedAt=null; } // edit mode
       else if (action==="tracking")      { d.trackingNo=value; }
       else if (action==="note")          { d.note=value; }
       return{...p,docState:{...p.docState,[docId]:d}};
