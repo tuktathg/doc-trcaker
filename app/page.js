@@ -554,6 +554,57 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
   );
 }
 
+// ── saveDocStatus: บันทึกสถานะ 1 รายการลง Sheets ────────────────────────────
+async function saveDocStatus(personName, docId, state) {
+  try {
+    await fetch("/api/sheets", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        action:     "save_status",
+        personName, docId,
+        state: {
+          fieldSent:    state.fieldSent,
+          fieldSentAt:  state.fieldSentAt  || "",
+          hrReceived:   state.hrReceived,
+          hrReceivedAt: state.hrReceivedAt || "",
+          trackingNo:   state.trackingNo   || "",
+          note:         state.note         || "",
+        },
+      }),
+    });
+  } catch(e) {
+    // ถ้า save ไม่ได้ก็ไม่ crash — state ยังอยู่ใน memory
+    console.warn("saveDocStatus failed:", e.message);
+  }
+}
+
+// ── mergeStatusRecords: นำสถานะจาก DocStatus มา merge กับ people ───────────
+function mergeStatusRecords(people, records) {
+  if (!records || !records.length) return people;
+  // สร้าง map: "personName|docId" → state
+  const map = {};
+  records.forEach(r => {
+    const key = `${r.personName}|${r.docId}`;
+    map[key] = {
+      fieldSent:    r.fieldSent    === "TRUE",
+      fieldSentAt:  r.fieldSentAt  || null,
+      hrReceived:   r.hrReceived   === "TRUE",
+      hrReceivedAt: r.hrReceivedAt || null,
+      trackingNo:   r.trackingNo   || "",
+      note:         r.note         || "",
+    };
+  });
+  return people.map(p => {
+    const newDocState = { ...p.docState };
+    Object.keys(newDocState).forEach(docId => {
+      const key = `${p.name}|${docId}`;
+      if (map[key]) newDocState[docId] = { ...newDocState[docId], ...map[key] };
+    });
+    return { ...p, docState: newDocState };
+  });
+}
+
 // ── StatPill ──────────────────────────────────────────────────────────────────
 function StatPill({ label, v, color, active, onClick }) {
   return (
@@ -576,42 +627,83 @@ export default function Home() {
   const [loadMsg,    setLoadMsg]    = useState("");
   const [lastLoaded, setLastLoaded] = useState(null);
   const [mobileView, setMobileView] = useState("list");
+  const [saveState,  setSaveState]  = useState("idle"); // idle | saving | saved | error
 
   const fetchData = useCallback(async () => {
     setLoadState("loading"); setLoadMsg("กำลังดึงข้อมูล...");
     try {
-      const [r1,r2] = await Promise.all([fetch("/api/sheets?sheet=tracker"),fetch("/api/sheets?sheet=docs")]);
+      // ดึงพร้อมกัน 3 sheet: รายชื่อ, รายการเอกสาร, สถานะที่บันทึกไว้
+      const [r1, r2, r3] = await Promise.all([
+        fetch("/api/sheets?sheet=tracker"),
+        fetch("/api/sheets?sheet=docs"),
+        fetch("/api/sheets?sheet=status"),
+      ]);
       if (!r1.ok) throw new Error(`server ${r1.status}`);
-      const j1 = await r1.json(); const j2 = r2.ok?await r2.json():{rows:[]};
+      const j1 = await r1.json();
+      const j2 = r2.ok ? await r2.json() : { rows: [] };
+      const j3 = r3.ok ? await r3.json() : { records: [] };
+
       if (j1.error) throw new Error(j1.error);
-      const importedDefs = parseDocsRows(j2.rows||[]);
-      const raw = parsePeopleRows(j1.rows||[]);
+
+      const importedDefs = parseDocsRows(j2.rows || []);
+      const raw = parsePeopleRows(j1.rows || []);
       if (!raw.length) throw new Error("ไม่พบข้อมูลรายชื่อใน Sheet");
-      const withState = raw.map(p=>{ const d=getDocDefs(p.position,importedDefs); return{...p,docState:initDocState(d)}; });
-      setDynDefs(importedDefs); setPeople(withState);
-      setSelected(prev=>withState.find(p=>p.name===prev?.name)||withState[0]||null);
-      setLoadState("ok"); setLastLoaded(new Date()); setLoadMsg(`โหลดสำเร็จ ${withState.length} คน`);
-    } catch(e) { setLoadState("error"); setLoadMsg("โหลดไม่สำเร็จ: "+e.message); }
-  },[]);
+
+      // สร้าง state เริ่มต้น แล้ว merge กับสถานะที่บันทึกไว้
+      const withState = raw.map(p => {
+        const d = getDocDefs(p.position, importedDefs);
+        return { ...p, docState: initDocState(d) };
+      });
+      const merged = mergeStatusRecords(withState, j3.records || []);
+
+      setDynDefs(importedDefs);
+      setPeople(merged);
+      setSelected(prev => merged.find(p => p.name === prev?.name) || merged[0] || null);
+      setLoadState("ok");
+      setLastLoaded(new Date());
+      setLoadMsg(`โหลดสำเร็จ ${merged.length} คน`);
+    } catch(e) {
+      setLoadState("error");
+      setLoadMsg("โหลดไม่สำเร็จ: " + e.message);
+    }
+  }, []);
 
   useEffect(()=>{ fetchData(); },[]);
   useEffect(()=>{
     if(selected){ const up=people.find(p=>p.name===selected.name); if(up) setSelected(up); }
   },[people]);
 
-  function handleDocUpdate(name,docId,action,value) {
-    setPeople(prev=>prev.map(p=>{
-      if(p.name!==name) return p;
-      const d={...p.docState[docId]};
-      if      (action==="field")          { if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }
-      else if (action==="field_force_on") { if(!d.fieldSent){d.fieldSent=true;d.fieldSentAt=todayStr();} }
-      else if (action==="field_off")      { d.fieldSent=false;d.fieldSentAt=null;d.hrReceived=false;d.hrReceivedAt=null; } // edit mode
-      else if (action==="hr")             { if(!d.hrReceived){d.hrReceived=true;d.hrReceivedAt=todayStr();} }
-      else if (action==="hr_off")         { d.hrReceived=false;d.hrReceivedAt=null; } // edit mode
-      else if (action==="tracking")      { d.trackingNo=value; }
-      else if (action==="note")          { d.note=value; }
-      return{...p,docState:{...p.docState,[docId]:d}};
-    }));
+  function handleDocUpdate(name, docId, action, value) {
+    setPeople(prev => {
+      const next = prev.map(p => {
+        if (p.name !== name) return p;
+        const d = { ...p.docState[docId] };
+        if      (action === "field")          { if (!d.fieldSent) { d.fieldSent=true; d.fieldSentAt=todayStr(); } }
+        else if (action === "field_force_on") { if (!d.fieldSent) { d.fieldSent=true; d.fieldSentAt=todayStr(); } }
+        else if (action === "field_off")      { d.fieldSent=false; d.fieldSentAt=null; d.hrReceived=false; d.hrReceivedAt=null; }
+        else if (action === "hr")             { if (!d.hrReceived) { d.hrReceived=true; d.hrReceivedAt=todayStr(); } }
+        else if (action === "hr_off")         { d.hrReceived=false; d.hrReceivedAt=null; }
+        else if (action === "tracking")       { d.trackingNo=value; }
+        else if (action === "note")           { d.note=value; }
+        return { ...p, docState: { ...p.docState, [docId]: d } };
+      });
+
+      // บันทึกลง Sheets ทุกครั้งที่มีการเปลี่ยนแปลง
+      const updatedPerson = next.find(p => p.name === name);
+      if (updatedPerson) {
+        const newState = updatedPerson.docState[docId];
+        setSaveState("saving");
+        saveDocStatus(name, docId, newState).then(() => {
+          setSaveState("saved");
+          setTimeout(() => setSaveState("idle"), 2000);
+        }).catch(() => {
+          setSaveState("error");
+          setTimeout(() => setSaveState("idle"), 3000);
+        });
+      }
+
+      return next;
+    });
   }
 
   const withSt   = people.map(p=>({...p,_st:calcSt(getDocDefs(p.position,dynDefs),p.docState)}));
@@ -635,7 +727,14 @@ export default function Home() {
             <div style={{ fontWeight:800, fontSize:15, color:C.text, letterSpacing:-0.3 }}>DocTrack HR</div>
             <div style={{ fontSize:9.5, color:dotColor, display:"flex", alignItems:"center", gap:4, fontWeight:600 }}>
               <span style={{ width:6, height:6, borderRadius:"50%", background:dotColor, display:"inline-block", flexShrink:0 }}/>
-              <span style={{ whiteSpace:"nowrap" }}>{loadState==="ok"?`อัปเดต ${lastLoaded?.toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit"})}`:loadState==="loading"?"กำลังโหลด...":loadState==="error"?"โหลดไม่สำเร็จ":"พร้อมใช้งาน"}</span>
+              <span style={{ whiteSpace:"nowrap" }}>
+                {loadState==="ok"    ? `อัปเดต ${lastLoaded?.toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit"})}` :
+                 loadState==="loading"? "กำลังโหลด..." :
+                 loadState==="error"  ? "โหลดไม่สำเร็จ" : "พร้อมใช้งาน"}
+              </span>
+              {saveState==="saving" && <span style={{ color:C.yellow,  marginLeft:6 }}>⏳ กำลังบันทึก...</span>}
+              {saveState==="saved"  && <span style={{ color:C.primary, marginLeft:6 }}>✅ บันทึกแล้ว</span>}
+              {saveState==="error"  && <span style={{ color:C.red,     marginLeft:6 }}>⚠ บันทึกไม่สำเร็จ</span>}
             </div>
           </div>
         </div>
