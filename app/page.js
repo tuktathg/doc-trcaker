@@ -189,33 +189,35 @@ function BulkTrackingSheet({ person, defs, onApply, onClose }) {
     </div>
   );
 
-  function handleApply() { if(!canApply) return; onApply(scopeDocs.map(d=>d.id), trackNo.trim()); onClose(); }
+  function handleApply() {
+    if(!canApply) return;
+    // แยก: ที่ยังไม่ส่ง vs ที่ส่งแล้ว
+    const toSend  = scopeDocs.filter(d => !person.docState[d.id]?.fieldSent);
+    const addOnly = scopeDocs.filter(d =>  person.docState[d.id]?.fieldSent);
+    onApply(toSend.map(d=>d.id), addOnly.map(d=>d.id), trackNo.trim());
+    onClose();
+  }
 }
 
 // ── BulkActionBar ─────────────────────────────────────────────────────────────
-function BulkActionBar({ person, defs, onBulkSend, onOpenBulkTracking }) {
-  // เฉพาะที่ยังไม่ได้ส่ง (lock: ส่งแล้วไม่นับ)
-  const notSent     = defs.filter(d => !person.docState[d.id]?.fieldSent);
-  const sentNoTrack = defs.filter(d =>  person.docState[d.id]?.fieldSent && !person.docState[d.id]?.trackingNo);
-  const sentDocs    = defs.filter(d =>  person.docState[d.id]?.fieldSent);
-  // ซ่อน bar ถ้าไม่มีอะไรให้ทำเลย
+// "ส่งทั้งหมด" → เปิด BulkTrackingSheet ก่อน (บังคับกรอกเลขพัสดุ)
+function BulkActionBar({ person, defs, onOpenBulkTracking }) {
+  const notSent  = defs.filter(d => !person.docState[d.id]?.fieldSent);
+  const sentDocs = defs.filter(d =>  person.docState[d.id]?.fieldSent);
   if (notSent.length===0 && sentDocs.length===0) return null;
   return (
     <div style={{ padding:"12px 14px", borderTop:`1.5px solid ${C.primaryMd}`, background:`linear-gradient(135deg,${C.tealLt},${C.primaryLt})`, display:"flex", gap:8, flexWrap:"wrap",
-      // Sticky at bottom on mobile
-      position:"sticky", bottom:0, zIndex:50,
-      boxShadow:"0 -2px 12px rgba(30,80,40,0.10)",
+      position:"sticky", bottom:0, zIndex:50, boxShadow:"0 -2px 12px rgba(30,80,40,0.10)",
     }}>
-      {/* แสดงปุ่มส่งทั้งหมดเฉพาะเมื่อยังมีค้างส่ง */}
+      {/* ส่งทั้งหมด = เปิด sheet กรอกเลขพัสดุ แล้วค่อยส่ง */}
       {notSent.length>0 && (
-        <button onClick={()=>onBulkSend(notSent.map(d=>d.id))} style={{ flex:1, minWidth:140, padding:"11px 14px", borderRadius:10, border:`1.5px solid ${C.teal}`, background:C.teal, color:"white", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, minHeight:44, boxShadow:`0 2px 8px rgba(26,138,122,.3)` }}>
-          ✓ ส่งทั้งหมด ({notSent.length} รายการ)
+        <button onClick={onOpenBulkTracking} style={{ flex:1, minWidth:140, padding:"11px 14px", borderRadius:10, border:`1.5px solid ${C.teal}`, background:C.teal, color:"white", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, minHeight:44, boxShadow:`0 2px 8px rgba(26,138,122,.3)` }}>
+          📦 กรอกเลขพัสดุแล้วส่ง ({notSent.length} รายการ)
         </button>
       )}
       {sentDocs.length>0 && (
         <button onClick={onOpenBulkTracking} style={{ flex:1, minWidth:140, padding:"11px 14px", borderRadius:10, border:`2px solid ${C.trackBorder}`, background:C.trackBg, color:C.trackText, fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, minHeight:44, boxShadow:`0 2px 8px rgba(212,160,23,.18)` }}>
-          📦 กรอกเลขพัสดุทีเดียว
-          {sentNoTrack.length>0 && <span style={{ background:C.trackBorder, color:"white", borderRadius:20, fontSize:11, fontWeight:800, padding:"1px 7px" }}>{sentNoTrack.length}</span>}
+          📦 เพิ่มเลขพัสดุรอบใหม่
         </button>
       )}
     </div>
@@ -223,51 +225,61 @@ function BulkActionBar({ person, defs, onBulkSend, onOpenBulkTracking }) {
 }
 
 // ── CheckRow ──────────────────────────────────────────────────────────────────
-// editMode prop: เมื่อ true ปลดล็อค checkbox ได้
+// trackingHistory: [{no, date}] — เก็บหลายครั้ง
+// กดส่งครั้งแรก: ต้องกรอกเลขพัสดุก่อน จึงจะบันทึกได้
 function CheckRow({ docDef, state, role, editMode, onToggleField, onToggleHR, onToggleFieldOff, onToggleHROff, onTracking, onNote }) {
-  const [showT, setShowT] = useState(false);
+  // "pending-send" = รอกรอกเลขก่อนส่ง (field กดครั้งแรก)
+  const [pendingSend, setPendingSend] = useState(false);
+  const [showAddTrack, setShowAddTrack] = useState(false); // เพิ่มเลขใหม่
   const [showN, setShowN] = useState(false);
-  const [tv, setTv] = useState(state.trackingNo||"");
+  const [tv, setTv] = useState("");
   const [nv, setNv] = useState(state.note||"");
   const trackRef = useRef(null);
   const noteRef  = useRef(null);
-  useEffect(()=>{ if(showT) setTimeout(()=>trackRef.current?.focus(),80); },[showT]);
+  useEffect(()=>{ if(pendingSend||showAddTrack) setTimeout(()=>trackRef.current?.focus(),80); },[pendingSend,showAddTrack]);
   useEffect(()=>{ if(showN) setTimeout(()=>noteRef.current?.focus(),80); },[showN]);
-  // sync input values เมื่อ state เปลี่ยนจากภายนอก
-  useEffect(()=>{ setTv(state.trackingNo||""); },[state.trackingNo]);
   useEffect(()=>{ setNv(state.note||""); },[state.note]);
 
-  const gap      = state.fieldSent && !state.hrReceived;
-  const done     = !!state.hrReceived;
-  // ปกติ: lock เมื่อส่ง/รับแล้ว — editMode: ปลดล็อคทั้งหมด
+  // trackingHistory: array [{no, date}] หรือ string เดิม (backward compat)
+  const history = Array.isArray(state.trackingHistory) ? state.trackingHistory
+                : state.trackingNo ? [{no:state.trackingNo, date:state.fieldSentAt||""}] : [];
+  const latestTrack = history.length > 0 ? history[history.length-1].no : "";
+
+  const gap         = state.fieldSent && !state.hrReceived;
+  const done        = !!state.hrReceived;
   const fieldLocked = !editMode && !!state.fieldSent;
   const hrLocked    = !editMode && !!state.hrReceived;
 
-  const rowBg   = done ? C.primaryLt : gap ? C.orangeLt : editMode ? "#FFFEF5" : "white";
-  const rowBord = editMode ? C.orange+"88" : done ? C.primaryMd : gap ? C.orangeMd : state.fieldSent ? C.tealMd : C.border;
+  const rowBg   = pendingSend ? C.trackBg : done ? C.primaryLt : gap ? C.orangeLt : editMode ? "#FFFEF5" : "white";
+  const rowBord = pendingSend ? C.trackBorder : editMode ? C.orange+"88" : done ? C.primaryMd : gap ? C.orangeMd : state.fieldSent ? C.tealMd : C.border;
 
-  // toggle handlers: edit mode สามารถ uncheck ได้
   function handleFieldClick() {
-    if (editMode) {
-      state.fieldSent ? onToggleFieldOff() : onToggleField();
-    } else if (!fieldLocked) {
-      onToggleField();
-    }
+    if (editMode) { state.fieldSent ? onToggleFieldOff() : setPendingSend(true); return; }
+    if (fieldLocked) return;
+    // บังคับกรอกเลขพัสดุก่อนส่ง
+    setPendingSend(true);
   }
   function handleHRClick() {
-    if (editMode) {
-      state.hrReceived ? onToggleHROff() : onToggleHR();
-    } else if (!hrLocked && state.fieldSent) {
-      onToggleHR();
-    }
+    if (editMode) { state.hrReceived ? onToggleHROff() : onToggleHR(); return; }
+    if (!hrLocked && state.fieldSent) onToggleHR();
   }
-
-  const fieldOff = editMode ? false : (role!=="field" || fieldLocked);
-  const hrOff    = editMode ? false : (role!=="hr" || !state.fieldSent || hrLocked);
+  function confirmSend() {
+    if (!tv.trim()) return;
+    onTracking(tv.trim(), true); // true = also mark fieldSent
+    setPendingSend(false);
+    setTv("");
+  }
+  function addNewTracking() {
+    if (!tv.trim()) return;
+    onTracking(tv.trim(), false); // false = only add tracking, don't change fieldSent
+    setShowAddTrack(false);
+    setTv("");
+  }
 
   return (
     <div style={{ borderRadius:12, border:`1.5px solid ${rowBord}`, background:rowBg, marginBottom:8, overflow:"hidden", transition:"all .2s", boxShadow:done&&!editMode?"none":C.shadow }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"13px 14px" }}>
+        {/* Label */}
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginBottom:3 }}>
             <span style={{ fontSize:14, fontWeight:600, color:done&&!editMode?C.primary:C.text, textDecoration:done&&!editMode?"line-through":"none", opacity:done&&!editMode?.65:1 }}>
@@ -275,10 +287,17 @@ function CheckRow({ docDef, state, role, editMode, onToggleField, onToggleHR, on
             </span>
             {!docDef.required && <span style={{ fontSize:9, color:C.muted, background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:4, padding:"1px 5px" }}>ไม่บังคับ</span>}
             {editMode && <span style={{ fontSize:9, color:C.orange, background:"#FFF3E0", border:`1px solid ${C.orange}88`, borderRadius:4, padding:"1px 6px", fontWeight:700 }}>✏️ แก้ไขได้</span>}
+            {pendingSend && <span style={{ fontSize:9, color:C.trackText, background:C.trackBg, border:`1px solid ${C.trackBorder}`, borderRadius:4, padding:"1px 6px", fontWeight:700 }}>📦 กรอกเลขพัสดุก่อน</span>}
           </div>
           <div style={{ display:"flex", flexWrap:"wrap", gap:5, alignItems:"center" }}>
             {gap && !editMode && <span style={{ fontSize:10, fontWeight:700, color:C.orange, background:C.orangeLt, borderRadius:5, padding:"1px 7px", border:`1px solid ${C.orangeMd}` }}>⚠ รอ HR</span>}
-            {state.trackingNo && <span style={{ fontSize:10, fontWeight:700, color:C.trackText, background:C.trackBg, borderRadius:5, padding:"2px 8px", border:`1.5px solid ${C.trackBorder}` }}>📦 {state.trackingNo}</span>}
+            {/* tracking history */}
+            {history.map((h,i)=>(
+              <span key={i} style={{ fontSize:10, fontWeight:700, color:C.trackText, background:C.trackBg, borderRadius:5, padding:"2px 8px", border:`1.5px solid ${C.trackBorder}`, display:"flex", alignItems:"center", gap:4 }}>
+                📦 {h.no}
+                {h.date && <span style={{ fontWeight:400, color:C.muted, fontSize:9 }}>({h.date})</span>}
+              </span>
+            ))}
             {state.note && <span style={{ fontSize:10, color:C.teal }}>💬 {state.note}</span>}
             {state.fieldSentAt && <span style={{ fontSize:10, color:C.muted }}>📤 {state.fieldSentAt}</span>}
             {state.hrReceivedAt && <span style={{ fontSize:10, color:C.primary, fontWeight:600 }}>✅ {state.hrReceivedAt}</span>}
@@ -305,41 +324,93 @@ function CheckRow({ docDef, state, role, editMode, onToggleField, onToggleHR, on
           />
         </div>
 
-        {/* Action buttons */}
+        {/* Buttons */}
         <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-          {(role==="field" || editMode) && (
-            <button onClick={()=>{setShowT(v=>!v); setShowN(false);}}
+          {/* เพิ่มเลขพัสดุใหม่ (ส่งเพิ่มเติม) — แสดงเมื่อส่งแล้วหรือ editMode */}
+          {(state.fieldSent || editMode) && (
+            <button onClick={()=>{setShowAddTrack(v=>!v); setPendingSend(false); setShowN(false); setTv("");}}
               style={{ width:36, height:36, borderRadius:8,
-                border:`1.5px solid ${state.trackingNo?C.trackBorder:C.border}`,
-                background:state.trackingNo?C.trackBg:"white",
-                color:state.trackingNo?C.trackText:C.muted,
+                border:`1.5px solid ${history.length>0?C.trackBorder:C.border}`,
+                background:history.length>0?C.trackBg:"white",
+                color:history.length>0?C.trackText:C.muted,
                 fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
-                boxShadow:state.trackingNo?`0 0 0 2px ${C.trackBorder}44`:"none",
+                boxShadow:history.length>0?`0 0 0 2px ${C.trackBorder}44`:"none",
               }}>📦</button>
           )}
-          <button onClick={()=>{setShowN(v=>!v); setShowT(false);}}
+          <button onClick={()=>{setShowN(v=>!v); setShowAddTrack(false); setPendingSend(false);}}
             style={{ width:36, height:36, borderRadius:8, border:`1.5px solid ${state.note?C.primaryMd:C.border}`,
               background:state.note?C.primaryLt:"white", color:state.note?C.primary:C.muted,
               fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>📝</button>
         </div>
       </div>
 
-      {/* Tracking input */}
-      {showT && (
+      {/* ── กรอกเลขพัสดุก่อนส่ง (บังคับ) ── */}
+      {pendingSend && (
         <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
-          <div style={{ background:C.trackBg, border:`2px solid ${C.trackBorder}`, borderRadius:11, padding:"12px 13px", boxShadow:"0 2px 10px rgba(212,160,23,.15)" }}>
-            <div style={{ fontSize:11, fontWeight:700, color:C.trackText, marginBottom:8 }}>📦 เลขพัสดุรายการนี้</div>
+          <div style={{ background:C.trackBg, border:`2.5px solid ${C.trackBorder}`, borderRadius:11, padding:"14px 14px", boxShadow:"0 2px 14px rgba(212,160,23,.2)" }}>
+            <div style={{ fontSize:12, fontWeight:800, color:C.trackText, marginBottom:4 }}>📦 กรอกเลขพัสดุก่อนส่ง</div>
+            <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>จำเป็นต้องระบุเลขพัสดุทุกครั้งที่ส่งเอกสาร</div>
             <input ref={trackRef} value={tv} onChange={e=>setTv(e.target.value)}
-              onKeyDown={e=>{ if(e.key==="Enter"){onTracking(tv);setShowT(false);} if(e.key==="Escape")setShowT(false); }}
-              placeholder="TH12345678901"
-              style={{ width:"100%", padding:"11px 13px", fontSize:15, fontWeight:700, letterSpacing:.6, background:"white", border:`2px solid ${C.trackBorder}`, borderRadius:8, outline:"none", color:C.trackText, marginBottom:10 }}/>
+              onKeyDown={e=>{ if(e.key==="Enter") confirmSend(); if(e.key==="Escape"){setPendingSend(false);setTv("");} }}
+              placeholder="เช่น TH12345678901, EMS001234"
+              style={{ width:"100%", padding:"13px 14px", fontSize:15, fontWeight:700, letterSpacing:.6,
+                background:"white", border:`2.5px solid ${tv.trim()?C.trackBorder:C.borderMd}`,
+                borderRadius:9, outline:"none", color:C.trackText, marginBottom:10,
+                boxShadow:tv.trim()?`0 0 0 3px rgba(212,160,23,.15)`:"none", transition:"all .18s" }}/>
             <div style={{ display:"flex", gap:8 }}>
-              <button onClick={()=>{onTracking(tv);setShowT(false);}} style={{ flex:1, padding:"10px", borderRadius:9, border:"none", background:C.primary, color:"white", fontSize:13, fontWeight:700, cursor:"pointer", minHeight:42 }}>✓ บันทึก</button>
-              <button onClick={()=>setShowT(false)} style={{ padding:"10px 14px", borderRadius:9, border:`1px solid ${C.border}`, background:"white", color:C.muted, fontSize:13, cursor:"pointer", minHeight:42 }}>ยกเลิก</button>
+              <button onClick={confirmSend} disabled={!tv.trim()} style={{
+                flex:1, padding:"12px", borderRadius:9, border:"none",
+                background:tv.trim()?C.primary:C.border, color:tv.trim()?"white":C.muted,
+                fontSize:14, fontWeight:800, cursor:tv.trim()?"pointer":"default", minHeight:46,
+                boxShadow:tv.trim()?`0 2px 8px rgba(45,122,79,.3)`:"none", transition:"all .18s",
+              }}>✓ บันทึกและส่งเอกสาร</button>
+              <button onClick={()=>{setPendingSend(false);setTv("");}} style={{
+                padding:"12px 16px", borderRadius:9, border:`1.5px solid ${C.border}`,
+                background:"white", color:C.muted, fontSize:13, cursor:"pointer", minHeight:46,
+              }}>ยกเลิก</button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── เพิ่มเลขพัสดุรอบใหม่ (ส่งเพิ่ม) ── */}
+      {showAddTrack && (
+        <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
+          <div style={{ background:C.trackBg, border:`2px solid ${C.trackBorder}`, borderRadius:11, padding:"12px 13px", boxShadow:"0 2px 10px rgba(212,160,23,.15)" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:C.trackText, marginBottom:4 }}>📦 เพิ่มเลขพัสดุรอบใหม่</div>
+            <div style={{ fontSize:10, color:C.muted, marginBottom:8 }}>สำหรับกรณีส่งเอกสารเพิ่มเติมครั้งใหม่</div>
+            {/* แสดง history ก่อนหน้า */}
+            {history.length > 0 && (
+              <div style={{ marginBottom:8, padding:"6px 10px", background:"white", borderRadius:7, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:10, color:C.muted, marginBottom:4 }}>ประวัติที่ส่งไปแล้ว:</div>
+                {history.map((h,i)=>(
+                  <div key={i} style={{ fontSize:11, color:C.trackText, fontWeight:600 }}>
+                    {i+1}. {h.no} <span style={{ fontWeight:400, color:C.muted }}>({h.date||"-"})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input ref={trackRef} value={tv} onChange={e=>setTv(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter") addNewTracking(); if(e.key==="Escape"){setShowAddTrack(false);setTv("");} }}
+              placeholder="เลขพัสดุรอบใหม่"
+              style={{ width:"100%", padding:"11px 13px", fontSize:15, fontWeight:700, letterSpacing:.6,
+                background:"white", border:`2px solid ${tv.trim()?C.trackBorder:C.borderMd}`,
+                borderRadius:8, outline:"none", color:C.trackText, marginBottom:10 }}/>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={addNewTracking} disabled={!tv.trim()} style={{
+                flex:1, padding:"10px", borderRadius:9, border:"none",
+                background:tv.trim()?C.primary:C.border, color:tv.trim()?"white":C.muted,
+                fontSize:13, fontWeight:700, cursor:tv.trim()?"pointer":"default", minHeight:42,
+              }}>✓ เพิ่มเลขพัสดุ</button>
+              <button onClick={()=>{setShowAddTrack(false);setTv("");}} style={{
+                padding:"10px 14px", borderRadius:9, border:`1px solid ${C.border}`,
+                background:"white", color:C.muted, fontSize:13, cursor:"pointer", minHeight:42,
+              }}>ยกเลิก</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Note input */}
       {showN && (
         <div style={{ padding:"0 14px 14px", animation:"popIn .18s ease" }}>
@@ -439,8 +510,10 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
     ? defs
     : defs.filter(d => !person.docState[d.id]?.fieldSent);
 
-  function handleBulkSend(ids)   { ids.forEach(id=>onUpdate(person.name,id,"field_force_on")); }
-  function handleBulkTrack(ids,t){ ids.forEach(id=>onUpdate(person.name,id,"tracking",t)); }
+  function handleBulkTrack(toSendIds, addOnlyIds, trackNo) {
+    toSendIds.forEach(id => onUpdate(person.name, id, "tracking_and_send", trackNo));
+    addOnlyIds.forEach(id => onUpdate(person.name, id, "tracking_add",     trackNo));
+  }
 
   return (
     <>
@@ -540,7 +613,7 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
                   onToggleHR={()=>onUpdate(person.name,doc.id,"hr")}
                   onToggleFieldOff={()=>onUpdate(person.name,doc.id,"field_off")}
                   onToggleHROff={()=>onUpdate(person.name,doc.id,"hr_off")}
-                  onTracking={v=>onUpdate(person.name,doc.id,"tracking",v)}
+                  onTracking={(v, alsoSend) => onUpdate(person.name, doc.id, alsoSend?"tracking_and_send":"tracking_add", v)}
                   onNote={v=>onUpdate(person.name,doc.id,"note",v)}
                 />
               ))
@@ -548,34 +621,37 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
         </div>
 
         {/* Bulk action bar */}
-        {role==="field" && <BulkActionBar person={person} defs={defs} onBulkSend={handleBulkSend} onOpenBulkTracking={()=>setShowBulk(true)}/>}
+        {role==="field" && <BulkActionBar person={person} defs={defs} onOpenBulkTracking={()=>setShowBulk(true)}/>}
       </div>
     </>
   );
 }
 
-// ── saveDocStatus: บันทึกสถานะ 1 รายการลง Sheets ────────────────────────────
+// ── saveDocStatus: บันทึกสถานะผ่าน GET params (หลีกเลี่ยง POST redirect) ──
 async function saveDocStatus(personName, docId, state) {
   try {
-    await fetch("/api/sheets", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({
-        action:     "save_status",
-        personName, docId,
-        state: {
-          fieldSent:    state.fieldSent,
-          fieldSentAt:  state.fieldSentAt  || "",
-          hrReceived:   state.hrReceived,
-          hrReceivedAt: state.hrReceivedAt || "",
-          trackingNo:   state.trackingNo   || "",
-          note:         state.note         || "",
-        },
-      }),
+    // serialize trackingHistory เป็น JSON string
+    const historyJson = JSON.stringify(
+      Array.isArray(state.trackingHistory) ? state.trackingHistory : []
+    );
+    const p = new URLSearchParams({
+      action:          "save",
+      personName,
+      docId,
+      fieldSent:       state.fieldSent    ? "true" : "false",
+      fieldSentAt:     state.fieldSentAt  || "",
+      hrReceived:      state.hrReceived   ? "true" : "false",
+      hrReceivedAt:    state.hrReceivedAt || "",
+      trackingNo:      state.trackingNo   || "",
+      trackingHistory: historyJson,
+      note:            state.note         || "",
     });
+    const res = await fetch(`/api/sheets?${p.toString()}`, { cache: "no-store" });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "save failed");
   } catch(e) {
-    // ถ้า save ไม่ได้ก็ไม่ crash — state ยังอยู่ใน memory
     console.warn("saveDocStatus failed:", e.message);
+    throw e; // re-throw เพื่อให้ saveState แสดง error
   }
 }
 
@@ -586,13 +662,19 @@ function mergeStatusRecords(people, records) {
   const map = {};
   records.forEach(r => {
     const key = `${r.personName}|${r.docId}`;
+    // parse trackingHistory JSON ที่เก็บไว้
+    let history = [];
+    try { if (r.trackingHistory) history = JSON.parse(r.trackingHistory); } catch(e) {}
+    // backward compat: ถ้าไม่มี history แต่มี trackingNo เดิม
+    if (!history.length && r.trackingNo) history = [{no: r.trackingNo, date: r.fieldSentAt||""}];
     map[key] = {
-      fieldSent:    r.fieldSent    === "TRUE",
-      fieldSentAt:  r.fieldSentAt  || null,
-      hrReceived:   r.hrReceived   === "TRUE",
-      hrReceivedAt: r.hrReceivedAt || null,
-      trackingNo:   r.trackingNo   || "",
-      note:         r.note         || "",
+      fieldSent:       r.fieldSent    === "TRUE",
+      fieldSentAt:     r.fieldSentAt  || null,
+      hrReceived:      r.hrReceived   === "TRUE",
+      hrReceivedAt:    r.hrReceivedAt || null,
+      trackingNo:      r.trackingNo   || "",
+      trackingHistory: history,
+      note:            r.note         || "",
     };
   });
   return people.map(p => {
@@ -678,17 +760,41 @@ export default function Home() {
       const next = prev.map(p => {
         if (p.name !== name) return p;
         const d = { ...p.docState[docId] };
-        if      (action === "field")          { if (!d.fieldSent) { d.fieldSent=true; d.fieldSentAt=todayStr(); } }
-        else if (action === "field_force_on") { if (!d.fieldSent) { d.fieldSent=true; d.fieldSentAt=todayStr(); } }
-        else if (action === "field_off")      { d.fieldSent=false; d.fieldSentAt=null; d.hrReceived=false; d.hrReceivedAt=null; }
-        else if (action === "hr")             { if (!d.hrReceived) { d.hrReceived=true; d.hrReceivedAt=todayStr(); } }
-        else if (action === "hr_off")         { d.hrReceived=false; d.hrReceivedAt=null; }
-        else if (action === "tracking")       { d.trackingNo=value; }
-        else if (action === "note")           { d.note=value; }
+        // normalize trackingHistory
+        if (!Array.isArray(d.trackingHistory)) {
+          d.trackingHistory = d.trackingNo ? [{no:d.trackingNo, date:d.fieldSentAt||""}] : [];
+        }
+
+        if (action === "field") {
+          // ไม่ทำอะไร — การส่งถูก trigger ผ่าน "tracking_and_send" แทน
+        }
+        else if (action === "tracking_and_send") {
+          // กรอกเลขพัสดุ + ส่งพร้อมกัน (กด confirm จาก pendingSend)
+          const entry = { no: value, date: todayStr() };
+          d.trackingHistory = [...d.trackingHistory, entry];
+          d.trackingNo = value; // latest tracking for backward compat
+          if (!d.fieldSent) { d.fieldSent=true; d.fieldSentAt=todayStr(); }
+        }
+        else if (action === "tracking_add") {
+          // เพิ่มเลขพัสดุรอบใหม่ (ส่งเพิ่ม) ไม่เปลี่ยน fieldSent
+          const entry = { no: value, date: todayStr() };
+          d.trackingHistory = [...d.trackingHistory, entry];
+          d.trackingNo = value;
+        }
+        else if (action === "field_force_on") {
+          // bulk send — ไม่บังคับเลขพัสดุ (เพราะ BulkTrackingSheet จัดการแล้ว)
+          if (!d.fieldSent) { d.fieldSent=true; d.fieldSentAt=todayStr(); }
+        }
+        else if (action === "field_off")  { d.fieldSent=false; d.fieldSentAt=null; d.hrReceived=false; d.hrReceivedAt=null; d.trackingHistory=[]; d.trackingNo=""; }
+        else if (action === "hr")         { if (!d.hrReceived) { d.hrReceived=true; d.hrReceivedAt=todayStr(); } }
+        else if (action === "hr_off")     { d.hrReceived=false; d.hrReceivedAt=null; }
+        else if (action === "tracking")   { d.trackingNo=value; } // legacy / editMode
+        else if (action === "note")       { d.note=value; }
+
         return { ...p, docState: { ...p.docState, [docId]: d } };
       });
 
-      // บันทึกลง Sheets ทุกครั้งที่มีการเปลี่ยนแปลง
+      // บันทึกลง Sheets
       const updatedPerson = next.find(p => p.name === name);
       if (updatedPerson) {
         const newState = updatedPerson.docState[docId];
@@ -701,7 +807,6 @@ export default function Home() {
           setTimeout(() => setSaveState("idle"), 3000);
         });
       }
-
       return next;
     });
   }
