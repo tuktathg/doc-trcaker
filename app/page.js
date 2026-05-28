@@ -201,7 +201,11 @@ function BulkActionBar({ person, defs, onBulkSend, onOpenBulkTracking }) {
   // ซ่อน bar ถ้าไม่มีอะไรให้ทำเลย
   if (notSent.length===0 && sentDocs.length===0) return null;
   return (
-    <div style={{ padding:"12px 14px", borderTop:`1.5px solid ${C.primaryMd}`, background:`linear-gradient(135deg,${C.tealLt},${C.primaryLt})`, display:"flex", gap:8, flexWrap:"wrap" }}>
+    <div style={{ padding:"12px 14px", borderTop:`1.5px solid ${C.primaryMd}`, background:`linear-gradient(135deg,${C.tealLt},${C.primaryLt})`, display:"flex", gap:8, flexWrap:"wrap",
+      // Sticky at bottom on mobile
+      position:"sticky", bottom:0, zIndex:50,
+      boxShadow:"0 -2px 12px rgba(30,80,40,0.10)",
+    }}>
       {/* แสดงปุ่มส่งทั้งหมดเฉพาะเมื่อยังมีค้างส่ง */}
       {notSent.length>0 && (
         <button onClick={()=>onBulkSend(notSent.map(d=>d.id))} style={{ flex:1, minWidth:140, padding:"11px 14px", borderRadius:10, border:`1.5px solid ${C.teal}`, background:C.teal, color:"white", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, minHeight:44, boxShadow:`0 2px 8px rgba(26,138,122,.3)` }}>
@@ -412,12 +416,14 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
     <>
       {showBulk && <BulkTrackingSheet person={person} defs={defs} onApply={handleBulkTrack} onClose={()=>setShowBulk(false)}/>}
 
-      <div style={{ display:"flex", flexDirection:"column", height:"100%", background:C.card, borderRadius:16, border:`1.5px solid ${C.border}`, overflow:"hidden", boxShadow:C.shadowMd, animation:"fadeUp .25s ease" }}>
+      <div style={{ display:"flex", flexDirection:"column", background:C.card, borderRadius:16, border:`1.5px solid ${C.border}`, boxShadow:C.shadowMd, animation:"fadeUp .25s ease", overflow:"hidden" }}>
 
         {/* Header */}
         <div style={{ padding:"16px 18px 14px", borderBottom:`1px solid ${C.border}`, background:"white" }}>
           {onBack && (
-            <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", color:C.primary, fontSize:13, fontWeight:600, cursor:"pointer", padding:"0 0 12px", marginLeft:-2 }}>← กลับรายชื่อ</button>
+            <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", color:C.primary, fontSize:14, fontWeight:700, cursor:"pointer", padding:"0 0 12px", marginLeft:-2 }}>
+              <span style={{ fontSize:18, lineHeight:1 }}>‹</span> กลับรายชื่อ
+            </button>
           )}
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
             <div>
@@ -476,7 +482,7 @@ function DetailPanel({ person, role, onUpdate, dynDefs, onBack }) {
         </div>
 
         {/* Checklist */}
-        <div style={{ flex:1, overflowY:"auto", padding:"12px 14px", background:C.bg }}>
+        <div style={{ padding:"12px 14px", background:C.bg }}>
           {displayDefs.length===0
             ? <div style={{ textAlign:"center", padding:40, color:C.primary, fontSize:14, fontWeight:600 }}>✅ ส่งเอกสารครบทุกรายการแล้ว!</div>
             : displayDefs.map(doc=>(
@@ -644,42 +650,58 @@ export default function Home() {
         </div>
       )}
 
-      {/* Main */}
+      {/* ── Desktop: fixed two-pane ─────────────────────────────────────── */}
       {people.length>0 && (
-        <>
-          {/* Desktop */}
-          <div className="desktop-layout" style={{ display:"flex", height:"calc(100vh - 56px - 112px)" }}>
-            <div style={{ width:340, borderRight:`1px solid ${C.border}`, overflowY:"auto", padding:"14px 12px", background:C.bg, flexShrink:0 }}>
-              {filtered.length===0 && <div style={{ textAlign:"center", color:C.muted, padding:48, fontSize:14 }}>ไม่พบข้อมูล</div>}
-              {filtered.map(p=><PersonCard key={p.name} person={p} selected={selected?.name===p.name} onClick={setSelected} dynDefs={dynDefs}/>)}
-            </div>
-            <div style={{ flex:1, padding:16, overflowY:"auto", background:C.bg, minWidth:0 }}>
-              {currentPerson
-                ?<DetailPanel person={currentPerson} role={role} onUpdate={handleDocUpdate} dynDefs={dynDefs}/>
-                :<div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.muted, fontSize:14 }}>← เลือกพนักงานเพื่อดูรายละเอียด</div>
-              }
-            </div>
+        <div className="desktop-layout" style={{ display:"flex", height:"calc(100vh - 56px - 112px)" }}>
+          <div style={{ width:340, borderRight:`1px solid ${C.border}`, overflowY:"auto", padding:"14px 12px", background:C.bg, flexShrink:0 }}>
+            {filtered.length===0 && <div style={{ textAlign:"center", color:C.muted, padding:48, fontSize:14 }}>ไม่พบข้อมูล</div>}
+            {filtered.map(p=><PersonCard key={p.name} person={p} selected={selected?.name===p.name} onClick={setSelected} dynDefs={dynDefs}/>)}
           </div>
-          {/* Mobile */}
-          <div className="mobile-layout" style={{ height:"calc(100vh - 56px - 112px)", overflow:"hidden", position:"relative" }}>
-            <div style={{ position:"absolute", inset:0, overflowY:"auto", padding:"12px", background:C.bg, transform:mobileView==="detail"?"translateX(-100%)":"translateX(0)", transition:"transform .28s ease" }}>
-              {filtered.length===0 && <div style={{ textAlign:"center", color:C.muted, padding:48 }}>ไม่พบข้อมูล</div>}
-              {filtered.map(p=><PersonCard key={p.name} person={p} selected={selected?.name===p.name} onClick={p=>{setSelected(p);setMobileView("detail");}} dynDefs={dynDefs}/>)}
-            </div>
-            <div style={{ position:"absolute", inset:0, overflowY:"auto", padding:"10px", background:C.bg, transform:mobileView==="detail"?"translateX(0)":"translateX(100%)", transition:"transform .28s ease" }}>
-              {currentPerson && <DetailPanel person={currentPerson} role={role} onUpdate={handleDocUpdate} dynDefs={dynDefs} onBack={()=>setMobileView("list")}/>}
-            </div>
+          <div style={{ flex:1, padding:16, overflowY:"auto", background:C.bg, minWidth:0 }}>
+            {currentPerson
+              ?<DetailPanel person={currentPerson} role={role} onUpdate={handleDocUpdate} dynDefs={dynDefs}/>
+              :<div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.muted, fontSize:14 }}>&#8592; เลือกพนักงานเพื่อดูรายละเอียด</div>
+            }
           </div>
-        </>
+        </div>
+      )}
+
+      {/* ── Mobile: native page scroll — list ───────────────────────────── */}
+      {people.length>0 && mobileView==="list" && (
+        <div className="mobile-layout" style={{ padding:"12px 12px 100px", background:C.bg }}>
+          {filtered.length===0 && <div style={{ textAlign:"center", color:C.muted, padding:48 }}>ไม่พบข้อมูล</div>}
+          {filtered.map(p=>(
+            <PersonCard key={p.name} person={p} selected={false}
+              onClick={p=>{ setSelected(p); setMobileView("detail"); window.scrollTo({top:0,behavior:"instant"}); }}
+              dynDefs={dynDefs}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── Mobile: native page scroll — detail ─────────────────────────── */}
+      {people.length>0 && mobileView==="detail" && currentPerson && (
+        <div className="mobile-layout" style={{ padding:"0 0 100px", background:C.bg }}>
+          <DetailPanel
+            person={currentPerson} role={role}
+            onUpdate={handleDocUpdate} dynDefs={dynDefs}
+            onBack={()=>{ setMobileView("list"); window.scrollTo({top:0,behavior:"instant"}); }}
+          />
+        </div>
       )}
 
       <style>{`
-        .desktop-layout{display:flex!important}.mobile-layout{display:none!important}
-        @media(max-width:700px){.desktop-layout{display:none!important}.mobile-layout{display:block!important}}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes popIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        @keyframes slideUp{from{transform:translateY(100px);opacity:0}to{transform:translateY(0);opacity:1}}
+        .desktop-layout{ display:flex !important; }
+        .mobile-layout { display:none !important; }
+        @media (max-width: 700px) {
+          .desktop-layout { display:none  !important; }
+          .mobile-layout  { display:block !important; }
+        }
+        * { -webkit-overflow-scrolling: touch; }
+        @keyframes fadeUp  { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes popIn   { from{opacity:0;transform:scale(.92)} to{opacity:1;transform:scale(1)} }
+        @keyframes spin    { to{transform:rotate(360deg)} }
+        @keyframes slideUp { from{transform:translateY(100px);opacity:0} to{transform:translateY(0);opacity:1} }
       `}</style>
     </div>
   );
